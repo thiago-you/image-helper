@@ -1,0 +1,4 @@
+<resources>
+    <string name="img_dir_not_found">"Directory for images does not exist."</string>
+    <string name="select_img">Select image…</string>
+</resources>
