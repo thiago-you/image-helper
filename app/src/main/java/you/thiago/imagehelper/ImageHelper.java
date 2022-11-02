@@ -24,6 +24,7 @@ import androidx.exifinterface.media.ExifInterface;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,7 +32,9 @@ import java.util.Objects;
 
 @SuppressWarnings({"unused", "WeakerAccess"})
 public class ImageHelper {
+
     public static class Image {
+
         public String uri;
         public Bitmap bitmap;
 
@@ -47,6 +50,7 @@ public class ImageHelper {
     }
 
     public static class ImageSize {
+
         public int width;
         public int height;
 
@@ -72,11 +76,11 @@ public class ImageHelper {
         }
 
         private void calculate(int maxWidth, int maxHeight) {
-            /* calculate ratios */
+            // calculate ratios
             float imgRatio = (float) width / (float) height;
             float maxRatio = (float) maxWidth / (float) maxHeight;
 
-            /* re-calculate img size */
+            // re-calculate img size
             if (height > maxHeight || width > maxWidth) {
                 if (imgRatio < maxRatio) {
                     imgRatio = (float) maxHeight / (float) height;
@@ -129,6 +133,10 @@ public class ImageHelper {
             }
 
             image.uri = insertImage(context, image.bitmap, title, quality);
+
+            if (image.uri == null) {
+                image.uri = uri.toString();
+            }
         } catch (Exception e) {
             Log.e(ImageComponent.class.getSimpleName(), e.getMessage(), e);
         }
@@ -144,7 +152,7 @@ public class ImageHelper {
         Image image = new Image();
 
         try {
-            /* config BitmapFactory to only read (don't load in memory) */
+            // config BitmapFactory to only read (don't load in memory)
             BitmapFactory.Options bitmapOptions = new BitmapFactory.Options();
             bitmapOptions.inJustDecodeBounds = true;
 
@@ -165,7 +173,7 @@ public class ImageHelper {
                     bitmapOptions.inInputShareable = true;
                 }
 
-                /* complete load bitmap */
+                // complete load bitmap
                 try (InputStream scaleStream = context.getContentResolver().openInputStream(fileUri)) {
                     image.bitmap = BitmapFactory.decodeStream(scaleStream, null, bitmapOptions);
                     image.bitmap = scaleDown(image.bitmap, maxWidth, maxHeight);
@@ -178,6 +186,10 @@ public class ImageHelper {
 
                 if (title != null) {
                     image.uri = insertImage(context, image.bitmap, title, quality);
+
+                    if (image.uri == null) {
+                        image.uri = fileUri.toString();
+                    }
                 } else {
                     image.uri = fileUri.toString();
                 }
@@ -189,43 +201,66 @@ public class ImageHelper {
         return image;
     }
 
+    @Nullable
     private static String insertImage(Context context, Bitmap bitmap, String title, int quality) {
-        String fileUri = "";
+        String fileUri = null;
 
         if (bitmap != null) {
-            ContentValues values = new ContentValues();
-            values.put(MediaStore.Images.Media.DISPLAY_NAME, title);
-            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                final String relativePath = Environment.DIRECTORY_PICTURES + File.separator + "pictures";
-                values.put(MediaStore.Images.Media.RELATIVE_PATH, relativePath);
-                values.put(MediaStore.Images.Media.IS_PENDING, 1);
-            }
-
-            ContentResolver resolver = context.getContentResolver();
-            Uri uri = null;
+            Uri uri;
 
             try {
-                final Uri contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
-                uri = resolver.insert(contentUri, values);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    String imageDirectory = Environment.DIRECTORY_DCIM + File.separator + Environment.DIRECTORY_PICTURES;
+                    ContentValues values = new ContentValues();
 
-                if (uri == null) {
-                    throw new IOException("Failed to create new MediaStore record.");
-                }
+                    values.put(MediaStore.Images.Media.DISPLAY_NAME, title);
+                    values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+                    values.put(MediaStore.Images.Media.RELATIVE_PATH, imageDirectory);
+                    values.put(MediaStore.Images.Media.IS_PENDING, 1);
 
-                try (OutputStream stream = resolver.openOutputStream(uri)) {
-                    if (stream == null) {
-                        throw new IOException("Failed to get output stream.");
+                    ContentResolver resolver = context.getContentResolver();
+
+                    final Uri contentUri = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                    uri = resolver.insert(contentUri, values);
+
+                    if (uri == null) {
+                        throw new IOException("Failed to create new MediaStore record.");
                     }
 
-                    if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
-                        throw new IOException("Failed to save bitmap.");
+                    try (OutputStream stream = resolver.openOutputStream(uri)) {
+                        if (stream == null) {
+                            throw new IOException("Failed to get output stream.");
+                        }
+
+                        if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
+                            throw new IOException("Failed to save bitmap.");
+                        }
+                    } catch (IOException e) {
+                        try {
+                            resolver.delete(uri, null, null);
+                        } catch (Exception ignore) {}
+
+                        throw e;
                     }
-                } catch (IOException e) {
-                    resolver.delete(uri, null, null);
-                    throw e;
+                } else {
+                    File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM), Environment.DIRECTORY_PICTURES);
+
+                    if (!directory.exists() && !directory.mkdir()) {
+                        throw new IOException("Cannot create public pictures dir.");
+                    }
+
+                    File image = new File(directory, title + ".jpg");
+
+                    try (OutputStream stream = new FileOutputStream(image)) {
+                        if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)) {
+                            throw new IOException("Failed to save bitmap.");
+                        }
+                    }
+
+                    uri = Uri.fromFile(image);
                 }
             } catch (Exception e) {
+                uri = null;
                 Log.e(ImageComponent.class.getSimpleName(), e.getMessage(), e);
             }
 
@@ -255,7 +290,7 @@ public class ImageHelper {
     }
 
     public static String toBase64(Bitmap bitmap, int width, int height, int quality) {
-        /* resize img before encode */
+        // resize img before encode
         bitmap = ImageHelper.scaleDown(bitmap, width, height);
         ByteArrayOutputStream byteOutput = new ByteArrayOutputStream();
         bitmap.compress(Bitmap.CompressFormat.JPEG, quality, byteOutput);
@@ -268,6 +303,7 @@ public class ImageHelper {
         Uri uriFile = Uri.fromFile(file);
 
         float orientation = ImageHelper.getOrientation(context, uriFile);
+
         if (orientation > 0) {
             bitmap = ImageHelper.rotateImage(bitmap, orientation);
         }
@@ -316,31 +352,31 @@ public class ImageHelper {
         float rotateAngle = 0;
 
         try {
-            ExifInterface ei;
-
-            if (context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            if (context != null) {
                 try (InputStream in = context.getContentResolver().openInputStream(uri)) {
-                    ei = new ExifInterface(Objects.requireNonNull(in));
+                    ExifInterface ei = new ExifInterface(Objects.requireNonNull(in));
+
+                    int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+
+                    switch (orientation) {
+                        case ExifInterface.ORIENTATION_ROTATE_90: {
+                            rotateAngle = 90f;
+                            break;
+                        }
+                        case ExifInterface.ORIENTATION_ROTATE_180: {
+                            rotateAngle = 180f;
+                            break;
+                        }
+                        case ExifInterface.ORIENTATION_ROTATE_270: {
+                            rotateAngle = 270f;
+                            break;
+                        }
+                        default: {
+                            rotateAngle = 0;
+                            break;
+                        }
+                    }
                 }
-            } else {
-                ei = new ExifInterface(Objects.requireNonNull(uri.getPath()));
-            }
-
-            int orientation = ei.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
-
-            switch (orientation) {
-                case ExifInterface.ORIENTATION_ROTATE_90:
-                    rotateAngle = 90f;
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_180:
-                    rotateAngle = 180f;
-                    break;
-                case ExifInterface.ORIENTATION_ROTATE_270:
-                    rotateAngle = 270f;
-                    break;
-                default:
-                    rotateAngle = 0;
-                    break;
             }
         } catch (IOException e) {
             Log.e(ImageComponent.class.getSimpleName(), e.getMessage(), e);

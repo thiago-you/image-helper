@@ -15,7 +15,8 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.content.FileProvider;
 
-import com.squareup.picasso.Picasso;
+import com.bumptech.glide.Glide;
+import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
 import java.io.File;
 import java.io.IOException;
@@ -31,10 +32,15 @@ import java.util.Objects;
 public class ImageComponent {
 
     public static final int DEFAULT_IMG_MAX_WIDTH = 1280;
-    public static final int DEFAULT_IMG_MAX_HEIGHT = 1280;
+    public static final int DEFAULT_IMG_MAX_HEIGHT = 960;
     public static final int DEFAULT_IMG_QUALITY = 80;
-    public static final int DEFAULT_THUMB_WIDTH = 125;
-    public static final int DEFAULT_THUMB_HEIGHT = 125;
+
+    public static final int LOWER_IMG_MAX_WIDTH = 800;
+    public static final int LOWER_IMG_MAX_HEIGHT = 600;
+    public static final int LOWER_IMG_QUALITY = 70;
+
+    public static final int DEFAULT_THUMB_WIDTH = 225;
+    public static final int DEFAULT_THUMB_HEIGHT = 225;
 
     private static final String APP_FACING_LENS = "android.intent.extras.LENS_FACING_FRONT";
     private static final String APP_FACING_CAMERA = "android.intent.extras.CAMERA_FACING";
@@ -44,8 +50,8 @@ public class ImageComponent {
     private Bitmap imgBitmap;
     private String imgUri;
 
-    private Context context;
-    private ImageView imgView;
+    private final Context context;
+    private final ImageView imgView;
 
     public ImageComponent(Context context, ImageView imgView) {
         this.context = context;
@@ -71,6 +77,10 @@ public class ImageComponent {
         imgTitle = null;
         imgBitmap = null;
         imgUri = null;
+    }
+
+    public ImageView getImageView() {
+        return imgView;
     }
 
     public File getImgFile() {
@@ -132,6 +142,10 @@ public class ImageComponent {
     }
 
     public static String getBitmapBase64(Bitmap bitmap, int width, int height, int quality) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return ImageHelper.toBase64(bitmap, Math.min(width, LOWER_IMG_MAX_WIDTH), Math.min(height, LOWER_IMG_MAX_HEIGHT), Math.min(quality, LOWER_IMG_QUALITY));
+        }
+
         return ImageHelper.toBase64(bitmap, width, height, quality);
     }
 
@@ -151,16 +165,16 @@ public class ImageComponent {
         return ImageHelper.toBase64(context, file, width, height, quality);
     }
 
-    public Bitmap getBitmapFromUri() throws IOException {
+    public Bitmap getBitmapFromUri() {
         return ImageComponent.getBitmapFromUri(context, imgUri);
     }
 
-    public static Bitmap getBitmapFromUri(Context context, String imgUri) throws IOException {
+    public static Bitmap getBitmapFromUri(Context context, String imgUri) {
         Bitmap image = null;
         Uri uri = Uri.parse(imgUri);
 
         if (uri.getPath() != null) {
-            image = ImageHelper.getImageBitmap(context, uri);
+            image = getResizedBitmap(context, uri);
         }
 
         return image;
@@ -206,6 +220,23 @@ public class ImageComponent {
         }
 
         return this;
+    }
+
+    public static Bitmap getResizedBitmap(@NonNull Context context, @Nullable Uri uriFile) {
+        return getResizedBitmap(context, uriFile, DEFAULT_IMG_MAX_WIDTH, DEFAULT_IMG_MAX_HEIGHT, DEFAULT_IMG_QUALITY);
+    }
+
+    public static Bitmap getResizedBitmap(Context context, @Nullable Uri uriFile, int imgMaxWidth, int imgMaxHeight, int quality) {
+        Bitmap bitmap = null;
+
+        if (uriFile != null) {
+            String timeStamp = new SimpleDateFormat("yyyyMMddhhmmss", Locale.US).format(new Date());
+            String title = "img_" + timeStamp;
+
+            bitmap = ImageHelper.resizeImage(context, uriFile, title, imgMaxWidth, imgMaxHeight, quality).bitmap;
+        }
+
+        return bitmap;
     }
 
     public ImageComponent createResizedBitmapFromFile() {
@@ -262,7 +293,13 @@ public class ImageComponent {
 
     public ImageComponent storeImg(int maxWidth, int maxHeight, int quality) {
         Uri uri = Uri.fromFile(getImgFile());
-        ImageHelper.Image image = ImageHelper.createBitmap(context, uri, imgTitle, maxWidth, maxHeight, quality);
+
+        ImageHelper.Image image;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            image = ImageHelper.createBitmap(context, uri, imgTitle, Math.min(maxWidth, LOWER_IMG_MAX_WIDTH), Math.min(maxHeight, LOWER_IMG_MAX_HEIGHT), Math.min(quality, LOWER_IMG_QUALITY));
+        } else {
+            image = ImageHelper.createBitmap(context, uri, imgTitle, maxWidth, maxHeight, quality);
+        }
 
         imgBitmap = image.bitmap;
         imgUri = image.uri;
@@ -275,18 +312,23 @@ public class ImageComponent {
         if (imgUri != null && imgUri.length() > 0) {
             Uri uri = Uri.parse(imgUri);
 
-            Picasso.get().load(uri).rotate(
-                    ImageHelper.getOrientation(context, uri)
-            ).into(imgView);
+            Glide.with(context)
+                    .load(uri)
+                    .diskCacheStrategy(DiskCacheStrategy.NONE)
+                    .fitCenter()
+                    .into(imgView);
+
         } else if (imgBitmap != null) {
             imgView.setImageBitmap(imgBitmap);
         }
     }
 
     public void insertInto(Context context, ImageView viewTarget, Uri imgUri) {
-        Picasso.get().load(imgUri).rotate(
-                ImageHelper.getOrientation(context, imgUri)
-        ).into(viewTarget);
+        Glide.with(context)
+                .load(imgUri)
+                .diskCacheStrategy(DiskCacheStrategy.NONE)
+                .fitCenter()
+                .into(viewTarget);
     }
 
     public Uri getUriForFile() {
@@ -325,6 +367,17 @@ public class ImageComponent {
         intent.setType("image/*");
         intent.setAction(Intent.ACTION_GET_CONTENT);
         intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+
+        return Intent.createChooser(intent, context.getString(R.string.select_img));
+    }
+
+    public static Intent configMultiGalleryIntent(Context context) {
+        Intent intent = new Intent();
+
+        intent.setType("image/*");
+        intent.setAction(Intent.ACTION_GET_CONTENT);
+        intent.putExtra(Intent.EXTRA_LOCAL_ONLY, true);
+        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
 
         return Intent.createChooser(intent, context.getString(R.string.select_img));
     }
